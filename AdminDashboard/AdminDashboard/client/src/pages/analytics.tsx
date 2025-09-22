@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +28,7 @@ function getFileIcon(fileType: string) {
 
 export default function Analytics() {
   const { user } = useAuth();
+  const [location, navigate] = useLocation();
 
   const { data: reports = [] } = useQuery({
     queryKey: ["/api/reports", { organizationId: user?.organizationId }],
@@ -124,7 +126,10 @@ export default function Analytics() {
                       </div>
                     </div>
                   </div>
-                  <Button data-testid={`button-create-dashboard-${report.id}`}>
+                  <Button 
+                    onClick={() => navigate("/analytics/builder")}
+                    data-testid={`button-create-dashboard-${report.id}`}
+                  >
                     <ArrowRight className="h-4 w-4 mr-2" />
                     Create Dashboard
                   </Button>
@@ -147,7 +152,10 @@ export default function Analytics() {
                 <p className="text-muted-foreground mb-4">
                   Upload CSV or Excel files to create interactive dashboards and visualizations.
                 </p>
-                <Button data-testid="button-upload-datasource">
+                <Button 
+                  onClick={() => navigate("/reports")}
+                  data-testid="button-upload-datasource"
+                >
                   Upload Data Source
                 </Button>
               </div>

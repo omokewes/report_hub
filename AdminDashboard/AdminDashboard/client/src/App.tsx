@@ -11,6 +11,7 @@ import Login from "@/pages/login";
 import Dashboard from "@/pages/dashboard";
 import Reports from "@/pages/reports";
 import Analytics from "@/pages/analytics";
+import AnalyticsBuilder from "@/pages/analytics/builder";
 import Users from "@/pages/admin/users";
 import Settings from "@/pages/admin/settings";
 import Organizations from "@/pages/superadmin/organizations";
@@ -57,6 +58,12 @@ function Router() {
       <Route path="/analytics">
         <ProtectedRoute>
           <Analytics />
+        </ProtectedRoute>
+      </Route>
+      
+      <Route path="/analytics/builder">
+        <ProtectedRoute>
+          <AnalyticsBuilder />
         </ProtectedRoute>
       </Route>
       
