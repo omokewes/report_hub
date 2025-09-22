@@ -36,7 +36,7 @@ export default function Analytics() {
   });
 
   // Filter reports that can be used for analytics (CSV, Excel)
-  const dataSourceReports = reports.filter((report: any) => 
+  const dataSourceReports = (reports as any[]).filter((report: any) => 
     report.fileType === "csv" || report.fileType === "xlsx"
   );
 
