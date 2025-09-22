@@ -554,11 +554,97 @@ export class PostgreSQLStorage implements IStorage {
 }
 
 
-// Temporarily use in-memory storage due to database connection issues
-// TODO: Fix SSL certificate issue with Neon database
-export const storage = new MemStorage();
+// Use PostgreSQL storage for persistent data
+export const storage = new PostgreSQLStorage();
 
-// Database initialization (currently disabled due to connection issues)
+// Database initialization with seed data
 export async function initializeDatabase() {
-  console.log("Using in-memory storage (database connection disabled temporarily)");
+  try {
+    // Check if we already have data by looking for the demo organization
+    const existingOrgs = await storage.getAllOrganizations();
+    
+    if (existingOrgs.length === 0) {
+      console.log("Seeding database with initial data...");
+      
+      // Create default organization
+      const org = await storage.createOrganization({
+        name: "Acme Corporation",
+        domain: "acme.com",
+        industry: "Technology",
+        size: "51-200 employees",
+        settings: {},
+      });
+
+      // Create default users with hashed passwords
+      const superadmin = await storage.createUser({
+        username: "superadmin",
+        email: "superadmin@demo.com",
+        password: "$2b$12$LRnBnMt0ch.sB.3rI0ncJ.j4fYQGe9YMlq.ujiHsQidIYjCgU6/Fq", // hashed "password"
+        name: "Super Admin",
+        role: "superadmin",
+        organizationId: null,
+      });
+
+      const admin = await storage.createUser({
+        username: "admin",
+        email: "admin@acme.com",
+        password: "$2b$12$nTshWglFT3R6kVfH/L3BHO8KEFA06XNKV5qAha1B2YFszJtfCXKQO", // hashed "password"
+        name: "John Doe",
+        role: "admin",
+        organizationId: org.id,
+      });
+
+      const user = await storage.createUser({
+        username: "user1",
+        email: "user@acme.com",
+        password: "$2b$12$IGSbvybiFD.DRbF5F.yiYubeXKkDzM8clshTA1FBWbQRxbsCTJkqe", // hashed "password"
+        name: "Anna Smith",
+        role: "user",
+        organizationId: org.id,
+      });
+
+      // Create sample folders
+      const financialFolder = await storage.createFolder({
+        name: "Financial Reports",
+        parentId: null,
+        organizationId: org.id,
+        createdBy: admin.id,
+      });
+
+      const marketingFolder = await storage.createFolder({
+        name: "Marketing",
+        parentId: null,
+        organizationId: org.id,
+        createdBy: admin.id,
+      });
+
+      // Create sample reports
+      await storage.createReport({
+        name: "Q4 Financial Report.pdf",
+        fileType: "pdf",
+        fileSize: 2400000,
+        filePath: "/uploads/q4-financial.pdf",
+        folderId: financialFolder.id,
+        organizationId: org.id,
+        createdBy: admin.id,
+      });
+
+      await storage.createReport({
+        name: "Marketing Analysis.xlsx",
+        fileType: "xlsx",
+        fileSize: 1800000,
+        filePath: "/uploads/marketing-analysis.xlsx",
+        folderId: marketingFolder.id,
+        organizationId: org.id,
+        createdBy: user.id,
+      });
+
+      console.log("Database seeded successfully with sample data");
+    } else {
+      console.log("Database already contains data, skipping seed");
+    }
+  } catch (error) {
+    console.error("Database initialization failed:", error);
+    throw error;
+  }
 }
