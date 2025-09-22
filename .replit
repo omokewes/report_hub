@@ -35,10 +35,14 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
+localPort = 43341
+externalPort = 3001
+
+[[ports]]
 localPort = 43537
 externalPort = 3000
 
 [deployment]
 deploymentTarget = "autoscale"
-build = ["bash", "-c", "cd AdminDashboard/AdminDashboard && npm run build"]
-run = ["bash", "-c", "cd AdminDashboard/AdminDashboard && npm start"]
+build = ["npm", "run", "build"]
+run = ["npm", "start"]
