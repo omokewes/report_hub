@@ -1,0 +1,26 @@
+This is the authentication logic I want for our app:
+The authentication process is a critical component of a secure multi-tenant application. Here is a detailed breakdown of the sign-up, login, and recovery flows, keeping in mind the different user roles and the multi-organization structure.
+1. Initial Authentication (New Organization)
+This process is designed to handle the creation of the very first account for a new organization.
+
+Superadmin Responsibility: The Superadmin (or a specific registration page designed for this purpose) will initiate the creation of a new organization. This is a one-time event per organization.
+First Admin Account: The system will prompt for the email and a temporary password for the very first Admin of that new organization. This account is automatically granted the Admin role and linked to the new organization_id.
+Welcome & Login: Once the account is created, the system will send a welcome email to the new Admin with a link to set their final password and log in.
+2. Authentication for an Established Organization
+Once an organization's account exists, the process for adding new users is handled internally by the Admin.
+
+Admin-Invited Users: The Admin logs into the system and navigates to the "Users" or "Groups & Users" section.
+Invitation Flow: The Admin enters the email address of the new user. The system will then:
+Create a new user entry in the Users table, automatically assigning the user to the Admin's organization_id.
+Generate a unique, single-use invitation link.
+Send an invitation email to the user with the link, prompting them to create their account and set a password.
+Direct Sign-Up: Users cannot sign up on a public registration page. This prevents unauthorized individuals from creating accounts and accessing an organization's internal data. All new user accounts must be explicitly invited by an Admin.
+3. Forgot Password Flow
+This process uses a standard and secure token-based approach to ensure that a user's password can be reset without compromising their account.
+
+Request Reset: The user clicks the "Forgot Password" link on the login page and enters their registered email address.
+Server-Side Check: The system checks if the email exists in the Users table. If it does not, a generic message like "If that email address is in our system, you will receive an email shortly" is displayed to prevent email enumeration attacks.
+Token Generation: If the email exists, the backend (powered by Supabase's authentication service) generates a secure, time-limited password reset token.
+Email Delivery: The system sends an email to the user with a password reset link. The URL in the link contains the unique, one-time token.
+New Password Creation: When the user clicks the link, they are directed to a "Reset Password" page on the application. The system validates the token. If the token is valid, the user is prompted to enter and confirm a new password.
+Password Update: Once the user submits the new password, the system updates their password in the database and invalidates the token. The user can then log in with their new credentials. This process ensures that no password information is ever sent via email.
