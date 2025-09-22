@@ -43,6 +43,7 @@ export interface IStorage {
   // User Invitations
   createUserInvitation(invitation: InsertUserInvitation): Promise<UserInvitation>;
   getUserInvitationByToken(token: string): Promise<UserInvitation | undefined>;
+  getUserInvitationByEmail(email: string): Promise<UserInvitation | undefined>;
   updateUserInvitation(id: string, updates: Partial<UserInvitation>): Promise<UserInvitation | undefined>;
 }
 
@@ -72,12 +73,12 @@ export class MemStorage implements IStorage {
     };
     this.organizations.set(org.id, org);
 
-    // Create default users
+    // Create default users with hashed passwords
     const superadmin: User = {
       id: "user-superadmin",
       username: "superadmin",
       email: "superadmin@demo.com",
-      password: "password",
+      password: "$2b$12$LRnBnMt0ch.sB.3rI0ncJ.j4fYQGe9YMlq.ujiHsQidIYjCgU6/Fq", // hashed "password"
       name: "Super Admin",
       role: "superadmin",
       organizationId: null,
@@ -90,7 +91,7 @@ export class MemStorage implements IStorage {
       id: "user-admin",
       username: "admin",
       email: "admin@acme.com",
-      password: "password",
+      password: "$2b$12$nTshWglFT3R6kVfH/L3BHO8KEFA06XNKV5qAha1B2YFszJtfCXKQO", // hashed "password"
       name: "John Doe",
       role: "admin",
       organizationId: org.id,
@@ -103,7 +104,7 @@ export class MemStorage implements IStorage {
       id: "user-1",
       username: "user1",
       email: "user@acme.com",
-      password: "password",
+      password: "$2b$12$IGSbvybiFD.DRbF5F.yiYubeXKkDzM8clshTA1FBWbQRxbsCTJkqe", // hashed "password"
       name: "Anna Smith",
       role: "user",
       organizationId: org.id,
@@ -393,6 +394,10 @@ export class MemStorage implements IStorage {
     return Array.from(this.userInvitations.values()).find(inv => inv.token === token);
   }
 
+  async getUserInvitationByEmail(email: string): Promise<UserInvitation | undefined> {
+    return Array.from(this.userInvitations.values()).find(inv => inv.email === email && !inv.isAccepted);
+  }
+
   async updateUserInvitation(id: string, updates: Partial<UserInvitation>): Promise<UserInvitation | undefined> {
     const invitation = this.userInvitations.get(id);
     if (!invitation) return undefined;
@@ -534,6 +539,11 @@ export class PostgreSQLStorage implements IStorage {
 
   async getUserInvitationByToken(token: string): Promise<UserInvitation | undefined> {
     const result = await db.select().from(schema.userInvitations).where(eq(schema.userInvitations.token, token));
+    return result[0];
+  }
+
+  async getUserInvitationByEmail(email: string): Promise<UserInvitation | undefined> {
+    const result = await db.select().from(schema.userInvitations).where(and(eq(schema.userInvitations.email, email), eq(schema.userInvitations.isAccepted, false)));
     return result[0];
   }
 

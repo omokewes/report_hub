@@ -11,6 +11,15 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { randomUUID } from "crypto";
 
+// Extend Request interface to include user property
+declare global {
+  namespace Express {
+    interface Request {
+      user?: any;
+    }
+  }
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -46,6 +55,13 @@ const upload = multer({
 
 // Security configuration
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-production";
+
+// Validate JWT secret in production
+if (process.env.NODE_ENV === "production" && JWT_SECRET === "dev-secret-change-in-production") {
+  console.error("SECURITY ERROR: Cannot use default JWT secret in production!");
+  console.error("Set JWT_SECRET environment variable to a secure random value");
+  process.exit(1);
+}
 const JWT_EXPIRES_IN = "24h";
 const SALT_ROUNDS = 12;
 
@@ -76,13 +92,6 @@ const resetPasswordSchema = z.object({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Serve uploaded files statically (with basic auth check)
-  app.use("/uploads", (req, res, next) => {
-    // Basic check - in production this should be more sophisticated
-    // For now, we'll allow access but this should be enhanced with proper authorization
-    next();
-  }, express.static(path.join(__dirname, "..", "uploads")));
-
   // JWT Authentication middleware
   const requireAuth = async (req: any, res: any, next: any) => {
     try {
@@ -136,6 +145,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next();
     };
   };
+
+  // Multi-tenant isolation middleware - ensures data access is scoped by organization
+  const requireOrganization = (req: any, res: any, next: any) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    // Superadmin can access all organizations, others are limited to their own
+    if (req.user.role !== "superadmin" && !req.user.organizationId) {
+      return res.status(403).json({ message: "No organization access" });
+    }
+    next();
+  };
+
+  // Secure file download endpoint with proper authorization
+  app.get("/api/files/:fileId", requireAuth, async (req, res) => {
+    try {
+      const { fileId } = req.params;
+      
+      // Find the report that owns this file
+      const report = await storage.getReport(fileId);
+      if (!report) {
+        return res.status(404).json({ message: "File not found" });
+      }
+
+      // Check if user has access to this organization's files
+      if (req.user.role !== "superadmin" && req.user.organizationId !== report.organizationId) {
+        return res.status(403).json({ message: "Access denied to this file" });
+      }
+
+      // Check if user has permission to view this specific report
+      const permission = await storage.getUserReportPermission(report.id, req.user.id);
+      if (!permission && req.user.role !== "superadmin" && req.user.id !== report.createdBy) {
+        return res.status(403).json({ message: "No permission to access this file" });
+      }
+
+      // Stream the file securely
+      if (report.filePath) {
+        const filePath = path.join(__dirname, "..", report.filePath);
+        res.download(filePath, report.name);
+      } else {
+        res.status(404).json({ message: "File path not found" });
+      }
+    } catch (error) {
+      console.error("File access error:", error);
+      res.status(500).json({ message: "Failed to access file" });
+    }
+  });
 
   // File upload route with authentication
   app.post("/api/upload", requireAuth, upload.single('file'), async (req, res) => {
@@ -199,9 +255,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { email, password } = loginSchema.parse(req.body);
       
       const user = await storage.getUserByEmail(email);
-      if (!user || user.password !== password) {
+      if (!user) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
+
+      // Verify password using bcrypt
+      const isValidPassword = await bcrypt.compare(password, user.password);
+      if (!isValidPassword) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      if (!user.isActive) {
+        return res.status(401).json({ message: "Account is inactive" });
+      }
+
+      // Generate JWT token
+      const token = jwt.sign(
+        { userId: user.id, organizationId: user.organizationId, role: user.role },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRES_IN }
+      );
 
       // Update last active
       await storage.updateUser(user.id, { lastActiveAt: new Date() });
@@ -213,19 +286,229 @@ export async function registerRoutes(app: Express): Promise<Server> {
           organizationId: user.organizationId,
           action: "login",
           resource: "auth",
-          metadata: {},
+          metadata: { ip: req.ip, userAgent: req.get('User-Agent') },
         });
       }
 
       const { password: _, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword });
+      res.json({ 
+        user: userWithoutPassword, 
+        token,
+        expiresIn: JWT_EXPIRES_IN 
+      });
     } catch (error) {
+      console.error("Login error:", error);
       res.status(400).json({ message: "Invalid request data" });
     }
   });
 
+  // User invitation system
+  app.post("/api/auth/invite", requireAuth, requireRole(["admin", "superadmin"]), async (req, res) => {
+    try {
+      const { email, role } = inviteUserSchema.parse(req.body);
+      
+      // Check if user already exists
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(400).json({ message: "User already exists" });
+      }
+
+      // Check if there's already a pending invitation
+      const existingInvitation = await storage.getUserInvitationByEmail?.(email);
+      if (existingInvitation && !existingInvitation.isAccepted) {
+        return res.status(400).json({ message: "Invitation already sent" });
+      }
+
+      // For superadmin, they can invite to any org (requires org ID in request)
+      // For admin, they can only invite to their own organization
+      let targetOrgId = req.user.organizationId;
+      if (req.user.role === "superadmin") {
+        if (!req.body.organizationId) {
+          return res.status(400).json({ message: "Organization ID required for superadmin invites" });
+        }
+        targetOrgId = req.body.organizationId;
+      }
+
+      if (!targetOrgId) {
+        return res.status(400).json({ message: "No target organization specified" });
+      }
+
+      // Create invitation
+      const invitation = await storage.createUserInvitation({
+        email,
+        role: role as "admin" | "user",
+        organizationId: targetOrgId,
+        invitedBy: req.user.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+      });
+
+      // Log activity
+      await storage.createActivityLog({
+        userId: req.user.id,
+        organizationId: req.user.organizationId!,
+        action: "invite_user",
+        resource: "user",
+        resourceId: invitation.id,
+        metadata: { invitedEmail: email, role },
+      });
+
+      res.status(201).json({ 
+        message: "Invitation sent successfully",
+        invitation: {
+          id: invitation.id,
+          email: invitation.email,
+          role: invitation.role,
+          expiresAt: invitation.expiresAt
+        }
+      });
+    } catch (error) {
+      console.error("Invitation error:", error);
+      res.status(400).json({ message: "Invalid invitation data" });
+    }
+  });
+
+  // Accept invitation and register
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const { token, password, name } = registerSchema.parse(req.body);
+      
+      // Find invitation by token
+      const invitation = await storage.getUserInvitationByToken(token);
+      if (!invitation) {
+        return res.status(400).json({ message: "Invalid invitation token" });
+      }
+
+      if (invitation.isAccepted) {
+        return res.status(400).json({ message: "Invitation already accepted" });
+      }
+
+      if (invitation.expiresAt < new Date()) {
+        return res.status(400).json({ message: "Invitation expired" });
+      }
+
+      // Check if user already exists
+      const existingUser = await storage.getUserByEmail(invitation.email);
+      if (existingUser) {
+        return res.status(400).json({ message: "User already exists" });
+      }
+
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+
+      // Create user account
+      const user = await storage.createUser({
+        username: invitation.email.split('@')[0], // Use email prefix as username
+        email: invitation.email,
+        password: hashedPassword,
+        name,
+        role: invitation.role,
+        organizationId: invitation.organizationId,
+      });
+
+      // Mark invitation as accepted
+      await storage.updateUserInvitation(invitation.id, { isAccepted: true });
+
+      // Log activity
+      await storage.createActivityLog({
+        userId: user.id,
+        organizationId: user.organizationId!,
+        action: "register",
+        resource: "user",
+        resourceId: user.id,
+        metadata: {},
+      });
+
+      const { password: _, ...userWithoutPassword } = user;
+      res.status(201).json({ 
+        user: userWithoutPassword,
+        message: "Account created successfully" 
+      });
+    } catch (error) {
+      console.error("Registration error:", error);
+      res.status(400).json({ message: "Registration failed" });
+    }
+  });
+
+  // Forgot password
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = forgotPasswordSchema.parse(req.body);
+      
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        // Don't reveal if email exists or not for security
+        return res.json({ message: "If the email exists, a reset link has been sent" });
+      }
+
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+      // Create reset token invitation (the storage will generate the token)
+      const resetInvitation = await storage.createUserInvitation({
+        email: user.email,
+        role: user.role,
+        organizationId: user.organizationId!,
+        invitedBy: user.id,
+        expiresAt,
+      });
+
+      // In a real application, send email here
+      console.log(`Password reset token for ${email}: ${resetInvitation.token}`);
+
+      res.json({ message: "If the email exists, a reset link has been sent" });
+    } catch (error) {
+      console.error("Forgot password error:", error);
+      res.status(400).json({ message: "Invalid request" });
+    }
+  });
+
+  // Reset password
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token, password } = resetPasswordSchema.parse(req.body);
+      
+      // Find reset token
+      const resetRequest = await storage.getUserInvitationByToken(token);
+      if (!resetRequest) {
+        return res.status(400).json({ message: "Invalid reset token" });
+      }
+
+      if (resetRequest.expiresAt < new Date()) {
+        return res.status(400).json({ message: "Reset token expired" });
+      }
+
+      // Find user
+      const user = await storage.getUserByEmail(resetRequest.email);
+      if (!user) {
+        return res.status(400).json({ message: "User not found" });
+      }
+
+      // Hash new password
+      const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+
+      // Update password
+      await storage.updateUser(user.id, { password: hashedPassword });
+
+      // Invalidate reset token
+      await storage.updateUserInvitation(resetRequest.id, { isAccepted: true });
+
+      // Log activity
+      await storage.createActivityLog({
+        userId: user.id,
+        organizationId: user.organizationId!,
+        action: "password_reset",
+        resource: "auth",
+        metadata: { ip: req.ip },
+      });
+
+      res.json({ message: "Password reset successfully" });
+    } catch (error) {
+      console.error("Reset password error:", error);
+      res.status(400).json({ message: "Password reset failed" });
+    }
+  });
+
   // Organizations
-  app.get("/api/organizations", async (req, res) => {
+  app.get("/api/organizations", requireAuth, requireRole(["superadmin"]), async (req, res) => {
     try {
       const organizations = await storage.getAllOrganizations();
       res.json(organizations);
@@ -234,7 +517,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/organizations/:id", async (req, res) => {
+  app.get("/api/organizations/:id", requireAuth, requireRole(["superadmin"]), async (req, res) => {
     try {
       const organization = await storage.getOrganization(req.params.id);
       if (!organization) {
@@ -246,7 +529,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/organizations", async (req, res) => {
+  app.post("/api/organizations", requireAuth, requireRole(["superadmin"]), async (req, res) => {
     try {
       const data = insertOrganizationSchema.parse(req.body);
       const organization = await storage.createOrganization(data);
@@ -257,14 +540,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Users
-  app.get("/api/users", async (req, res) => {
+  app.get("/api/users", requireAuth, requireRole(["admin", "superadmin"]), async (req: any, res) => {
     try {
-      const { organizationId } = req.query;
-      if (!organizationId || typeof organizationId !== "string") {
-        return res.status(400).json({ message: "organizationId is required" });
+      let targetOrgId;
+      
+      if (req.user.role === "superadmin") {
+        // Superadmin can access users from any organization
+        const { organizationId } = req.query;
+        if (!organizationId || typeof organizationId !== "string") {
+          return res.status(400).json({ message: "organizationId is required for superadmin" });
+        }
+        targetOrgId = organizationId;
+      } else {
+        // Admin can only access users from their own organization
+        if (!req.user.organizationId) {
+          return res.status(403).json({ message: "No organization access" });
+        }
+        targetOrgId = req.user.organizationId;
       }
 
-      const users = await storage.getUsersByOrganization(organizationId);
+      const users = await storage.getUsersByOrganization(targetOrgId);
       const usersWithoutPasswords = users.map(({ password, ...user }) => user);
       res.json(usersWithoutPasswords);
     } catch (error) {
@@ -272,9 +567,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/users", async (req, res) => {
+  app.post("/api/users", requireAuth, requireRole(["admin", "superadmin"]), async (req: any, res) => {
     try {
-      const data = insertUserSchema.parse(req.body);
+      // For admins, enforce their organization; for superadmin, allow specifying org
+      let targetOrgId = req.user.organizationId;
+      if (req.user.role === "superadmin") {
+        if (req.body.organizationId) {
+          targetOrgId = req.body.organizationId;
+        } else if (!targetOrgId) {
+          return res.status(400).json({ message: "Organization ID required for superadmin" });
+        }
+      }
+
+      if (!targetOrgId) {
+        return res.status(403).json({ message: "No organization access" });
+      }
+
+      // Prevent role escalation - admins cannot create superadmins
+      if (req.user.role === "admin" && req.body.role === "superadmin") {
+        return res.status(403).json({ message: "Cannot create superadmin users" });
+      }
+
+      const data = insertUserSchema.parse({
+        ...req.body,
+        organizationId: targetOrgId, // Use server-derived org ID
+      });
       const user = await storage.createUser(data);
       
       // Log activity
@@ -297,23 +614,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Folders
-  app.get("/api/folders", async (req, res) => {
+  app.get("/api/folders", requireAuth, async (req: any, res) => {
     try {
-      const { organizationId } = req.query;
-      if (!organizationId || typeof organizationId !== "string") {
-        return res.status(400).json({ message: "organizationId is required" });
+      let targetOrgId;
+      
+      if (req.user.role === "superadmin") {
+        // Superadmin can access any organization's folders
+        const { organizationId } = req.query;
+        if (!organizationId || typeof organizationId !== "string") {
+          return res.status(400).json({ message: "organizationId is required for superadmin" });
+        }
+        targetOrgId = organizationId;
+      } else {
+        // Regular users can only access their own organization's folders
+        if (!req.user.organizationId) {
+          return res.status(403).json({ message: "No organization access" });
+        }
+        targetOrgId = req.user.organizationId;
       }
 
-      const folders = await storage.getFoldersByOrganization(organizationId);
+      const folders = await storage.getFoldersByOrganization(targetOrgId);
       res.json(folders);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch folders" });
     }
   });
 
-  app.post("/api/folders", async (req, res) => {
+  app.post("/api/folders", requireAuth, requireRole(["admin", "superadmin"]), async (req: any, res) => {
     try {
-      const data = insertFolderSchema.parse(req.body);
+      const data = insertFolderSchema.parse({
+        ...req.body,
+        createdBy: req.user.id,
+        organizationId: req.user.organizationId, // Use server-derived org ID
+      });
       const folder = await storage.createFolder(data);
       
       // Log activity
@@ -333,32 +666,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Reports
-  app.get("/api/reports", async (req, res) => {
+  app.get("/api/reports", requireAuth, async (req: any, res) => {
     try {
-      const { organizationId, userId, starred } = req.query;
+      const { starred } = req.query;
       
-      if (starred === "true" && userId && typeof userId === "string") {
-        const reports = await storage.getStarredReports(userId);
-        res.json(reports);
-      } else if (organizationId && typeof organizationId === "string") {
-        const reports = await storage.getReportsByOrganization(organizationId);
-        res.json(reports);
-      } else if (userId && typeof userId === "string") {
-        const reports = await storage.getReportsByUser(userId);
+      if (starred === "true") {
+        // Get starred reports for the current user only
+        const reports = await storage.getStarredReports(req.user.id);
         res.json(reports);
       } else {
-        res.status(400).json({ message: "organizationId or userId is required" });
+        // Get reports from user's organization (or all if superadmin)
+        let targetOrgId;
+        
+        if (req.user.role === "superadmin") {
+          const { organizationId } = req.query;
+          if (organizationId && typeof organizationId === "string") {
+            targetOrgId = organizationId;
+          } else {
+            // Superadmin sees all reports if no org specified
+            const reports = await storage.getAllReports();
+            return res.json(reports);
+          }
+        } else {
+          if (!req.user.organizationId) {
+            return res.status(403).json({ message: "No organization access" });
+          }
+          targetOrgId = req.user.organizationId;
+        }
+        
+        const reports = await storage.getReportsByOrganization(targetOrgId);
+        res.json(reports);
       }
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch reports" });
     }
   });
 
-  app.get("/api/reports/:id", async (req, res) => {
+  app.get("/api/reports/:id", requireAuth, async (req: any, res) => {
     try {
       const report = await storage.getReport(req.params.id);
       if (!report) {
         return res.status(404).json({ message: "Report not found" });
+      }
+
+      // Check organization access
+      if (req.user.role !== "superadmin" && req.user.organizationId !== report.organizationId) {
+        return res.status(403).json({ message: "Access denied to this report" });
+      }
+
+      // Check report permissions
+      const permission = await storage.getUserReportPermission(report.id, req.user.id);
+      if (!permission && req.user.role !== "superadmin" && req.user.id !== report.createdBy) {
+        return res.status(403).json({ message: "No permission to view this report" });
       }
 
       // Increment view count
@@ -403,24 +762,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/reports/:id/star", async (req, res) => {
+  app.patch("/api/reports/:id/star", requireAuth, async (req: any, res) => {
     try {
       const { starred } = req.body;
-      const report = await storage.updateReport(req.params.id, { isStarred: Boolean(starred) });
       
+      // First get the report to check permissions
+      const report = await storage.getReport(req.params.id);
       if (!report) {
         return res.status(404).json({ message: "Report not found" });
       }
 
-      res.json(report);
+      // Check organization access
+      if (req.user.role !== "superadmin" && req.user.organizationId !== report.organizationId) {
+        return res.status(403).json({ message: "Access denied to this report" });
+      }
+
+      // Check report permissions
+      const permission = await storage.getUserReportPermission(report.id, req.user.id);
+      if (!permission && req.user.role !== "superadmin" && req.user.id !== report.createdBy) {
+        return res.status(403).json({ message: "No permission to star this report" });
+      }
+
+      const updatedReport = await storage.updateReport(req.params.id, { isStarred: Boolean(starred) });
+      res.json(updatedReport);
     } catch (error) {
       res.status(500).json({ message: "Failed to update report" });
     }
   });
 
   // Report Permissions
-  app.get("/api/reports/:id/permissions", async (req, res) => {
+  app.get("/api/reports/:id/permissions", requireAuth, async (req: any, res) => {
     try {
+      // First get the report to check ownership and organization
+      const report = await storage.getReport(req.params.id);
+      if (!report) {
+        return res.status(404).json({ message: "Report not found" });
+      }
+
+      // Check organization access
+      if (req.user.role !== "superadmin" && req.user.organizationId !== report.organizationId) {
+        return res.status(403).json({ message: "Access denied to this report" });
+      }
+
+      // Check if user has permission to view permissions (must be owner, admin, or superadmin)
+      const userPermission = await storage.getUserReportPermission(report.id, req.user.id);
+      const isOwner = req.user.id === report.createdBy;
+      const isAdmin = req.user.role === "admin" || req.user.role === "superadmin";
+      
+      if (!isOwner && !isAdmin && userPermission?.permission !== "owner") {
+        return res.status(403).json({ message: "No permission to view report permissions" });
+      }
+
       const permissions = await storage.getReportPermissions(req.params.id);
       res.json(permissions);
     } catch (error) {
@@ -428,27 +820,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/reports/:id/permissions", async (req, res) => {
+  app.post("/api/reports/:id/permissions", requireAuth, requireRole(["admin", "superadmin"]), async (req: any, res) => {
     try {
+      // First get the report to check ownership and organization
+      const report = await storage.getReport(req.params.id);
+      if (!report) {
+        return res.status(404).json({ message: "Report not found" });
+      }
+
+      // Check organization access
+      if (req.user.role !== "superadmin" && req.user.organizationId !== report.organizationId) {
+        return res.status(403).json({ message: "Access denied to this report" });
+      }
+
+      // Ensure target user is in the same organization (unless superadmin)
+      if (req.user.role !== "superadmin") {
+        const targetUser = await storage.getUserById(req.body.userId);
+        if (!targetUser || targetUser.organizationId !== req.user.organizationId) {
+          return res.status(403).json({ message: "Cannot grant permissions to users outside your organization" });
+        }
+      }
+
       const data = insertReportPermissionSchema.parse({
         ...req.body,
         reportId: req.params.id,
+        grantedBy: req.user.id, // Use server-derived user ID
       });
       
       const permission = await storage.createReportPermission(data);
       
       // Log activity
-      const report = await storage.getReport(req.params.id);
-      if (report) {
-        await storage.createActivityLog({
-          userId: data.grantedBy,
-          organizationId: report.organizationId,
-          action: "permission_granted",
-          resource: "report",
-          resourceId: report.id,
-          metadata: { permission: data.permission, userId: data.userId },
-        });
-      }
+      await storage.createActivityLog({
+        userId: req.user.id,
+        organizationId: report.organizationId,
+        action: "permission_granted",
+        resource: "report",
+        resourceId: report.id,
+        metadata: { permission: data.permission, userId: data.userId },
+      });
 
       res.status(201).json(permission);
     } catch (error) {
@@ -457,15 +866,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Activity Logs
-  app.get("/api/activity", async (req, res) => {
+  app.get("/api/activity", requireAuth, requireRole(["admin", "superadmin"]), async (req: any, res) => {
     try {
-      const { organizationId, limit } = req.query;
-      if (!organizationId || typeof organizationId !== "string") {
-        return res.status(400).json({ message: "organizationId is required" });
+      let targetOrgId;
+      
+      if (req.user.role === "superadmin") {
+        // Superadmin can access activity from any organization
+        const { organizationId } = req.query;
+        if (!organizationId || typeof organizationId !== "string") {
+          return res.status(400).json({ message: "organizationId is required for superadmin" });
+        }
+        targetOrgId = organizationId;
+      } else {
+        // Admin can only access activity from their own organization
+        if (!req.user.organizationId) {
+          return res.status(403).json({ message: "No organization access" });
+        }
+        targetOrgId = req.user.organizationId;
       }
 
+      const { limit } = req.query;
       const limitNum = limit ? parseInt(limit as string) : undefined;
-      const logs = await storage.getActivityLogsByOrganization(organizationId, limitNum);
+      const logs = await storage.getActivityLogsByOrganization(targetOrgId, limitNum);
       res.json(logs);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch activity logs" });
@@ -473,10 +895,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // User Invitations
-  app.post("/api/invitations", async (req, res) => {
+  app.post("/api/invitations", requireAuth, requireRole(["admin", "superadmin"]), async (req: any, res) => {
     try {
+      // For admins, enforce their organization; for superadmin, allow specifying org
+      let targetOrgId = req.user.organizationId;
+      if (req.user.role === "superadmin") {
+        if (req.body.organizationId) {
+          targetOrgId = req.body.organizationId;
+        } else if (!targetOrgId) {
+          return res.status(400).json({ message: "Organization ID required for superadmin" });
+        }
+      }
+
+      if (!targetOrgId) {
+        return res.status(403).json({ message: "No organization access" });
+      }
+
       const data = {
         ...req.body,
+        organizationId: targetOrgId, // Use server-derived org ID
+        invitedBy: req.user.id, // Use server-derived user ID
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
       };
       
@@ -484,8 +922,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Log activity
       await storage.createActivityLog({
-        userId: invitation.invitedBy,
-        organizationId: invitation.organizationId,
+        userId: req.user.id,
+        organizationId: targetOrgId,
         action: "user_invited",
         resource: "invitation",
         resourceId: invitation.id,

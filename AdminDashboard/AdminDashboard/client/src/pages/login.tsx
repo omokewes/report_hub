@@ -36,7 +36,7 @@ export default function Login() {
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true);
     try {
-      const user = await login(data.email, data.password);
+      const { user } = await login(data.email, data.password);
       setUser(user);
       setLocation("/dashboard");
     } catch (error) {

@@ -12,10 +12,16 @@ export interface AuthUser {
   createdAt: Date;
 }
 
-export async function login(email: string, password: string): Promise<AuthUser> {
+export async function login(email: string, password: string): Promise<{ user: AuthUser; token: string }> {
   const response = await apiRequest("POST", "/api/auth/login", { email, password });
   const data = await response.json();
-  return data.user;
+  
+  // Store the JWT token
+  if (data.token) {
+    localStorage.setItem("auth-token", data.token);
+  }
+  
+  return { user: data.user, token: data.token };
 }
 
 export function getInitials(name: string): string {
