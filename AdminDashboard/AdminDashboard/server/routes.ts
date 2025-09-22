@@ -7,6 +7,9 @@ import { z } from "zod";
 import multer from "multer";
 import path from "path";
 import { fileURLToPath } from "url";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { randomUUID } from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,9 +44,35 @@ const upload = multer({
   }
 });
 
+// Security configuration
+const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-production";
+const JWT_EXPIRES_IN = "24h";
+const SALT_ROUNDS = 12;
+
+// Validation schemas
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string(),
+});
+
+const inviteUserSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(["admin", "user"]).default("user"),
+});
+
+const registerSchema = z.object({
+  token: z.string(),
+  password: z.string().min(8),
+  name: z.string().min(1),
+});
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string(),
+  password: z.string().min(8),
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -54,12 +83,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   }, express.static(path.join(__dirname, "..", "uploads")));
 
-  // Authentication middleware
+  // JWT Authentication middleware
   const requireAuth = async (req: any, res: any, next: any) => {
-    // For now, we'll skip auth since sessions aren't fully implemented
-    // In production, this should check for valid session/token
-    req.user = { id: "default-user", organizationId: "default-org" }; // Temporary mock
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ message: "Access token required" });
+      }
+
+      const token = authHeader.substring(7);
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      
+      const user = await storage.getUser(decoded.userId);
+      if (!user || !user.isActive) {
+        return res.status(401).json({ message: "Invalid or inactive user" });
+      }
+
+      req.user = user;
+      next();
+    } catch (error) {
+      return res.status(401).json({ message: "Invalid access token" });
+    }
+  };
+
+  // Optional authentication middleware (for routes that work with or without auth)
+  const optionalAuth = async (req: any, res: any, next: any) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        const decoded = jwt.verify(token, JWT_SECRET) as any;
+        const user = await storage.getUser(decoded.userId);
+        if (user && user.isActive) {
+          req.user = user;
+        }
+      }
+    } catch (error) {
+      // Ignore auth errors for optional auth
+    }
     next();
+  };
+
+  // Role-based access control middleware
+  const requireRole = (roles: string[]) => {
+    return (req: any, res: any, next: any) => {
+      if (!req.user) {
+        return res.status(401).json({ message: "Authentication required" });
+      }
+      if (!roles.includes(req.user.role)) {
+        return res.status(403).json({ message: "Insufficient permissions" });
+      }
+      next();
+    };
   };
 
   // File upload route with authentication
