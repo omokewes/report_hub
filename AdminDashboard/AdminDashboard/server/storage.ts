@@ -212,6 +212,8 @@ export class MemStorage implements IStorage {
     const user: User = {
       ...insertUser,
       id,
+      role: insertUser.role || "user",
+      organizationId: insertUser.organizationId || null,
       isActive: true,
       lastActiveAt: new Date(),
       createdAt: new Date(),
@@ -242,6 +244,10 @@ export class MemStorage implements IStorage {
     const org: Organization = {
       ...insertOrg,
       id,
+      domain: insertOrg.domain || null,
+      industry: insertOrg.industry || null,
+      size: insertOrg.size || null,
+      settings: insertOrg.settings || {},
       createdAt: new Date(),
     };
     this.organizations.set(id, org);
@@ -266,6 +272,7 @@ export class MemStorage implements IStorage {
     const folder: Folder = {
       ...insertFolder,
       id,
+      parentId: insertFolder.parentId || null,
       createdAt: new Date(),
     };
     this.folders.set(id, folder);
@@ -294,6 +301,9 @@ export class MemStorage implements IStorage {
     const report: Report = {
       ...insertReport,
       id,
+      fileSize: insertReport.fileSize || null,
+      filePath: insertReport.filePath || null,
+      folderId: insertReport.folderId || null,
       isStarred: false,
       viewCount: 0,
       createdAt: new Date(),
@@ -347,6 +357,9 @@ export class MemStorage implements IStorage {
     const log: ActivityLog = {
       ...insertLog,
       id,
+      resource: insertLog.resource || null,
+      resourceId: insertLog.resourceId || null,
+      metadata: insertLog.metadata || {},
       createdAt: new Date(),
     };
     this.activityLogs.set(id, log);
@@ -367,6 +380,7 @@ export class MemStorage implements IStorage {
     const invitation: UserInvitation = {
       ...insertInvitation,
       id,
+      role: insertInvitation.role || "user",
       token,
       isAccepted: false,
       createdAt: new Date(),
