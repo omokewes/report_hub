@@ -44,64 +44,39 @@ function getStatusColor(status: string) {
 export default function Organizations() {
   const { user } = useAuth();
 
-  const { data: organizations = [] } = useQuery({
-    queryKey: ["/api/organizations"],
+  const { data: systemMetrics, isLoading: metricsLoading } = useQuery({
+    queryKey: ["/api/system/metrics"],
     enabled: user?.role === "superadmin",
   });
 
-  const { data: activityLogs = [] } = useQuery({
-    queryKey: ["/api/activity", { limit: "20" }],
+  const { data: systemActivity = [], isLoading: activityLoading } = useQuery({
+    queryKey: ["/api/system/activity", { limit: "20" }],
     enabled: user?.role === "superadmin",
   });
 
-  // Mock system stats for demonstration
-  const systemStats = {
-    totalOrganizations: organizations.length || 24,
-    totalUsers: 1247,
-    totalReports: 8439,
-    systemHealth: "99.9%"
+  // Use real system data
+  const systemStats = systemMetrics ? {
+    totalOrganizations: systemMetrics.totalOrganizations,
+    totalUsers: systemMetrics.totalUsers,
+    totalReports: systemMetrics.totalReports,
+    systemHealth: systemMetrics.systemHealth
+  } : {
+    totalOrganizations: 0,
+    totalUsers: 0,
+    totalReports: 0,
+    systemHealth: "Loading..."
   };
 
-  const mockOrganizations = [
-    {
-      id: "org-1",
-      name: "Acme Corporation",
-      status: "active",
-      type: "Enterprise",
-      userCount: 45,
-      reportCount: 128,
-      createdAt: "2023-01-15"
-    },
-    {
-      id: "org-2", 
-      name: "TechStart Inc.",
-      status: "active",
-      type: "Professional",
-      userCount: 12,
-      reportCount: 34,
-      createdAt: "2023-03-22"
-    },
-    {
-      id: "org-3",
-      name: "Global Ventures",
-      status: "active", 
-      type: "Enterprise",
-      userCount: 78,
-      reportCount: 245,
-      createdAt: "2022-11-08"
-    },
-    {
-      id: "org-4",
-      name: "Innovation Labs",
-      status: "trial",
-      type: "Trial",
-      userCount: 23,
-      reportCount: 67,
-      createdAt: "2024-01-10"
-    }
-  ];
-
-  const displayOrganizations = organizations.length > 0 ? organizations : mockOrganizations;
+  // Use real organization data with proper status mapping
+  const displayOrganizations = systemMetrics?.organizations?.map((org: any) => ({
+    id: org.id,
+    name: org.name,
+    status: "active", // All existing orgs are active
+    type: org.size || "Professional", // Map size to type
+    userCount: org.userCount,
+    reportCount: org.reportCount,
+    createdAt: new Date(org.createdAt).toLocaleDateString()
+  })) || [];
 
   return (
     <div className="p-8">
@@ -298,8 +273,8 @@ export default function Organizations() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {activityLogs.length > 0 ? (
-                  activityLogs.slice(0, 5).map((log: any, index: number) => (
+                {!activityLoading && systemActivity.length > 0 ? (
+                  systemActivity.slice(0, 5).map((log: any, index: number) => (
                     <div key={log.id} className="flex gap-3">
                       <div className="w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
                       <div>
@@ -307,37 +282,15 @@ export default function Organizations() {
                           {log.action.replace(/_/g, ' ')} {log.resource}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {new Date(log.createdAt).toLocaleString()}
+                          {log.organizationName} • {new Date(log.createdAt).toLocaleString()}
                         </p>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="space-y-4">
-                    <div className="flex gap-3">
-                      <div className="w-2 h-2 bg-green-500 rounded-full mt-2"></div>
-                      <div>
-                        <p className="text-sm">New organization created</p>
-                        <p className="text-xs text-muted-foreground">Innovation Labs • 2 hours ago</p>
-                      </div>
-                    </div>
-                    
-                    <div className="flex gap-3">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full mt-2"></div>
-                      <div>
-                        <p className="text-sm">User invitation sent</p>
-                        <p className="text-xs text-muted-foreground">Acme Corporation • 4 hours ago</p>
-                      </div>
-                    </div>
-                    
-                    <div className="flex gap-3">
-                      <div className="w-2 h-2 bg-purple-500 rounded-full mt-2"></div>
-                      <div>
-                        <p className="text-sm">Report uploaded</p>
-                        <p className="text-xs text-muted-foreground">TechStart Inc • 6 hours ago</p>
-                      </div>
-                    </div>
-                  </div>
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    {activityLoading ? "Loading activity..." : "No recent system activity"}
+                  </p>
                 )}
               </div>
             </CardContent>

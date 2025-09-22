@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/use-auth";
-import { Plus, Users, FileText, Share, Eye, Star, Clock, Upload, BarChart3, UserPlus, TrendingUp, Activity } from "lucide-react";
+import { Plus, Users, FileText, Share, Eye, Star, Clock, Upload, BarChart3, UserPlus, TrendingUp, Activity, Building2 } from "lucide-react";
 import { UploadReportModal } from "@/components/modals/upload-report-modal";
 import { InviteUserModal } from "@/components/modals/invite-user-modal";
 
@@ -14,34 +14,63 @@ export default function Dashboard() {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
 
+  // Different data queries based on user role
+  const isSuperAdmin = user?.role === "superadmin";
+  
+  // For super admins, get system-wide metrics
+  const { data: systemMetrics } = useQuery({
+    queryKey: ["/api/system/metrics"],
+    enabled: isSuperAdmin,
+  });
+
+  const { data: systemActivity = [] } = useQuery({
+    queryKey: ["/api/system/activity", { limit: "10" }],
+    enabled: isSuperAdmin,
+  });
+
+  // For regular admins and users, get organization-specific data
   const { data: reports = [] } = useQuery({
     queryKey: ["/api/reports", { organizationId: user?.organizationId }],
-    enabled: !!user?.organizationId,
+    enabled: !!user?.organizationId && !isSuperAdmin,
   }) as { data: any[] };
 
   const { data: users = [] } = useQuery({
     queryKey: ["/api/users", { organizationId: user?.organizationId }],
-    enabled: !!user?.organizationId && (user?.role === "admin" || user?.role === "superadmin"),
+    enabled: !!user?.organizationId && (user?.role === "admin") && !isSuperAdmin,
   }) as { data: any[] };
 
   const { data: activityLogs = [] } = useQuery({
     queryKey: ["/api/activity", { organizationId: user?.organizationId, limit: "10" }],
-    enabled: !!user?.organizationId,
+    enabled: !!user?.organizationId && !isSuperAdmin,
   }) as { data: any[] };
 
-  const recentReports = reports
-    .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 4);
+  // Different calculations based on user role
+  let recentReports, totalViews, sharedReports, teamMembers;
+  let dashboardTitle, dashboardDescription;
 
-  const totalViews = reports.reduce((sum: number, report: any) => sum + report.viewCount, 0);
-  const sharedReports = reports.filter((report: any) => report.createdBy !== user?.id).length;
-  const teamMembers = users.length;
-
-  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
-  const dashboardTitle = isAdmin ? "Admin Dashboard" : "Welcome back!";
-  const dashboardDescription = isAdmin 
-    ? "Overview of your organization's reports and team activity"
-    : "Here's what's happening with your reports today";
+  if (isSuperAdmin) {
+    // System-wide metrics for super admin
+    recentReports = systemActivity.slice(0, 4);
+    totalViews = systemMetrics?.totalReports || 0;
+    sharedReports = systemMetrics?.totalOrganizations || 0;
+    teamMembers = systemMetrics?.totalUsers || 0;
+    dashboardTitle = "System Dashboard";
+    dashboardDescription = "System-wide overview and metrics across all organizations";
+  } else {
+    // Organization-specific metrics for admins and users
+    recentReports = reports
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 4);
+    totalViews = reports.reduce((sum: number, report: any) => sum + report.viewCount, 0);
+    sharedReports = reports.filter((report: any) => report.createdBy !== user?.id).length;
+    teamMembers = users.length;
+    
+    const isAdmin = user?.role === "admin";
+    dashboardTitle = isAdmin ? "Admin Dashboard" : "Welcome back!";
+    dashboardDescription = isAdmin 
+      ? "Overview of your organization's reports and team activity"
+      : "Here's what's happening with your reports today";
+  }
 
   return (
     <div className="p-8">
@@ -50,29 +79,42 @@ export default function Dashboard() {
         description={dashboardDescription}
       >
         <div className="flex gap-3">
-          {isAdmin && (
+          {isSuperAdmin ? (
             <Button 
               variant="outline"
-              onClick={() => setInviteModalOpen(true)}
-              data-testid="button-manage-users"
+              onClick={() => window.location.href = '/admin/organizations'}
+              data-testid="button-manage-organizations"
             >
-              <UserPlus className="h-4 w-4 mr-2" />
-              Manage Users
+              <Building2 className="h-4 w-4 mr-2" />
+              Manage Organizations
             </Button>
+          ) : (
+            <>
+              {user?.role === "admin" && (
+                <Button 
+                  variant="outline"
+                  onClick={() => setInviteModalOpen(true)}
+                  data-testid="button-manage-users"
+                >
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Manage Users
+                </Button>
+              )}
+              <Button 
+                onClick={() => setUploadModalOpen(true)}
+                data-testid="button-create-report"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Create Report
+              </Button>
+            </>
           )}
-          <Button 
-            onClick={() => setUploadModalOpen(true)}
-            data-testid="button-create-report"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Create Report
-          </Button>
         </div>
       </Header>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        {isAdmin && (
+        {(isSuperAdmin || user?.role === "admin") && (
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center gap-4">
@@ -81,7 +123,9 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <p className="text-2xl font-bold" data-testid="stat-team-members">{teamMembers}</p>
-                  <p className="text-sm text-muted-foreground">Team Members</p>
+                  <p className="text-sm text-muted-foreground">
+                    {isSuperAdmin ? "Total Users" : "Team Members"}
+                  </p>
                   <p className="text-xs text-green-600">+3 this month</p>
                 </div>
               </div>

@@ -27,6 +27,7 @@ export interface IStorage {
   getReportsByOrganization(organizationId: string): Promise<Report[]>;
   getReportsByUser(userId: string): Promise<Report[]>;
   getStarredReports(userId: string): Promise<Report[]>;
+  getAllReports(): Promise<Report[]>;
   createReport(report: InsertReport): Promise<Report>;
   updateReport(id: string, updates: Partial<Report>): Promise<Report | undefined>;
 
@@ -297,6 +298,10 @@ export class MemStorage implements IStorage {
     return userReports.filter(report => report.isStarred);
   }
 
+  async getAllReports(): Promise<Report[]> {
+    return Array.from(this.reports.values());
+  }
+
   async createReport(insertReport: InsertReport): Promise<Report> {
     const id = randomUUID();
     const report: Report = {
@@ -480,6 +485,10 @@ export class PostgreSQLStorage implements IStorage {
 
   async getStarredReports(userId: string): Promise<Report[]> {
     return await db.select().from(schema.reports).where(and(eq(schema.reports.createdBy, userId), eq(schema.reports.isStarred, true))).orderBy(desc(schema.reports.createdAt));
+  }
+
+  async getAllReports(): Promise<Report[]> {
+    return await db.select().from(schema.reports).orderBy(desc(schema.reports.createdAt));
   }
 
   async createReport(insertReport: InsertReport): Promise<Report> {

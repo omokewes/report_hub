@@ -936,6 +936,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // System-wide metrics for super admins
+  app.get("/api/system/metrics", requireAuth, requireRole(["superadmin"]), async (req, res) => {
+    try {
+      // Get all organizations with user and report counts
+      const organizations = await storage.getAllOrganizations();
+      
+      let totalUsers = 0;
+      let totalReports = 0;
+      let organizationMetrics = [];
+
+      for (const org of organizations) {
+        const users = await storage.getUsersByOrganization(org.id);
+        const reports = await storage.getReportsByOrganization(org.id);
+        
+        totalUsers += users.length;
+        totalReports += reports.length;
+        
+        organizationMetrics.push({
+          id: org.id,
+          name: org.name,
+          userCount: users.length,
+          reportCount: reports.length,
+          adminCount: users.filter(u => u.role === 'admin').length,
+          createdAt: org.createdAt,
+          domain: org.domain,
+          industry: org.industry,
+          size: org.size
+        });
+      }
+
+      const systemMetrics = {
+        totalOrganizations: organizations.length,
+        totalUsers,
+        totalReports,
+        organizations: organizationMetrics,
+        systemHealth: "99.9%",
+        activeOrganizations: organizations.length,
+      };
+
+      res.json(systemMetrics);
+    } catch (error) {
+      console.error("System metrics error:", error);
+      res.status(500).json({ message: "Failed to fetch system metrics" });
+    }
+  });
+
+  // System-wide activity for super admins
+  app.get("/api/system/activity", requireAuth, requireRole(["superadmin"]), async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+      
+      // Get activity logs from all organizations
+      const organizations = await storage.getAllOrganizations();
+      let allActivities: any[] = [];
+
+      for (const org of organizations) {
+        const orgActivities = await storage.getActivityLogsByOrganization(org.id, limit);
+        // Add organization name to each activity
+        const enrichedActivities = orgActivities.map(activity => ({
+          ...activity,
+          organizationName: org.name
+        }));
+        allActivities = allActivities.concat(enrichedActivities);
+      }
+
+      // Sort by created date and limit
+      allActivities.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+      allActivities = allActivities.slice(0, limit);
+
+      res.json(allActivities);
+    } catch (error) {
+      console.error("System activity error:", error);
+      res.status(500).json({ message: "Failed to fetch system activity" });
+    }
+  });
+
+  // Analytics data sources
+  app.get("/api/analytics/data-sources", requireAuth, async (req: any, res) => {
+    try {
+      if (!req.user.organizationId) {
+        return res.status(403).json({ message: "No organization access" });
+      }
+
+      const reports = await storage.getReportsByOrganization(req.user.organizationId);
+      const dataSourceReports = reports.filter(report => report.fileType === "csv" || report.fileType === "xlsx");
+      res.json(dataSourceReports);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch data sources" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
