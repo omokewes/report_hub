@@ -3,6 +3,42 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertUserSchema, insertOrganizationSchema, insertReportSchema, insertFolderSchema, insertReportPermissionSchema } from "@shared/schema";
 import { z } from "zod";
+import multer from "multer";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Configure multer for file uploads
+const storage_multer = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, "..", "uploads"));
+  },
+  filename: (req, file, cb) => {
+    // Generate unique filename with timestamp
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({
+  storage: storage_multer,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Allow only specific file types for reports
+    const allowedTypes = ['.pdf', '.docx', '.xlsx', '.csv', '.pptx'];
+    const fileExt = path.extname(file.originalname).toLowerCase();
+    
+    if (allowedTypes.includes(fileExt)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only PDF, DOCX, XLSX, CSV, and PPTX files are allowed.'));
+    }
+  }
+});
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -10,6 +46,35 @@ const loginSchema = z.object({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // File upload route
+  app.post("/api/upload", upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+
+      // Get file info
+      const fileInfo = {
+        originalName: req.file.originalname,
+        filename: req.file.filename,
+        path: req.file.path,
+        size: req.file.size,
+        mimetype: req.file.mimetype,
+        fileType: path.extname(req.file.originalname).substring(1).toLowerCase()
+      };
+
+      console.log(`[express] File uploaded: ${fileInfo.originalName} (${fileInfo.size} bytes)`);
+
+      res.status(200).json({
+        message: "File uploaded successfully",
+        file: fileInfo
+      });
+    } catch (error) {
+      console.error("[express] Upload error:", error);
+      res.status(500).json({ message: "File upload failed" });
+    }
+  });
+
   // Authentication
   app.post("/api/auth/login", async (req, res) => {
     try {

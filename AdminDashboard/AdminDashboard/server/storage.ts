@@ -1,8 +1,8 @@
 import { type User, type InsertUser, type Organization, type InsertOrganization, type Report, type InsertReport, type Folder, type InsertFolder, type ReportPermission, type InsertReportPermission, type ActivityLog, type InsertActivityLog, type UserInvitation, type InsertUserInvitation } from "@shared/schema";
 import { randomUUID } from "crypto";
-// import { db } from "./db";
+import { db } from "./db";
 import * as schema from "@shared/schema";
-// import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -389,4 +389,152 @@ export class MemStorage implements IStorage {
   }
 }
 
+export class PostgreSQLStorage implements IStorage {
+  // Users
+  async getUser(id: string): Promise<User | undefined> {
+    const result = await db.select().from(schema.users).where(eq(schema.users.id, id));
+    return result[0];
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const result = await db.select().from(schema.users).where(eq(schema.users.email, email));
+    return result[0];
+  }
+
+  async getUsersByOrganization(organizationId: string): Promise<User[]> {
+    return await db.select().from(schema.users).where(eq(schema.users.organizationId, organizationId));
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const result = await db.insert(schema.users).values(insertUser).returning();
+    return result[0];
+  }
+
+  async updateUser(id: string, updates: Partial<User>): Promise<User | undefined> {
+    const result = await db.update(schema.users).set(updates).where(eq(schema.users.id, id)).returning();
+    return result[0];
+  }
+
+  // Organizations
+  async getOrganization(id: string): Promise<Organization | undefined> {
+    const result = await db.select().from(schema.organizations).where(eq(schema.organizations.id, id));
+    return result[0];
+  }
+
+  async getAllOrganizations(): Promise<Organization[]> {
+    return await db.select().from(schema.organizations);
+  }
+
+  async createOrganization(insertOrg: InsertOrganization): Promise<Organization> {
+    const result = await db.insert(schema.organizations).values(insertOrg).returning();
+    return result[0];
+  }
+
+  async updateOrganization(id: string, updates: Partial<Organization>): Promise<Organization | undefined> {
+    const result = await db.update(schema.organizations).set(updates).where(eq(schema.organizations.id, id)).returning();
+    return result[0];
+  }
+
+  // Folders
+  async getFoldersByOrganization(organizationId: string): Promise<Folder[]> {
+    return await db.select().from(schema.folders).where(eq(schema.folders.organizationId, organizationId));
+  }
+
+  async createFolder(insertFolder: InsertFolder): Promise<Folder> {
+    const result = await db.insert(schema.folders).values(insertFolder).returning();
+    return result[0];
+  }
+
+  // Reports
+  async getReport(id: string): Promise<Report | undefined> {
+    const result = await db.select().from(schema.reports).where(eq(schema.reports.id, id));
+    return result[0];
+  }
+
+  async getReportsByOrganization(organizationId: string): Promise<Report[]> {
+    return await db.select().from(schema.reports).where(eq(schema.reports.organizationId, organizationId)).orderBy(desc(schema.reports.createdAt));
+  }
+
+  async getReportsByUser(userId: string): Promise<Report[]> {
+    return await db.select().from(schema.reports).where(eq(schema.reports.createdBy, userId)).orderBy(desc(schema.reports.createdAt));
+  }
+
+  async getStarredReports(userId: string): Promise<Report[]> {
+    return await db.select().from(schema.reports).where(and(eq(schema.reports.createdBy, userId), eq(schema.reports.isStarred, true))).orderBy(desc(schema.reports.createdAt));
+  }
+
+  async createReport(insertReport: InsertReport): Promise<Report> {
+    const result = await db.insert(schema.reports).values(insertReport).returning();
+    return result[0];
+  }
+
+  async updateReport(id: string, updates: Partial<Report>): Promise<Report | undefined> {
+    const updateData = {
+      ...updates,
+      updatedAt: new Date(),
+    };
+    const result = await db.update(schema.reports).set(updateData).where(eq(schema.reports.id, id)).returning();
+    return result[0];
+  }
+
+  // Report Permissions
+  async getReportPermissions(reportId: string): Promise<ReportPermission[]> {
+    return await db.select().from(schema.reportPermissions).where(eq(schema.reportPermissions.reportId, reportId));
+  }
+
+  async getUserReportPermission(reportId: string, userId: string): Promise<ReportPermission | undefined> {
+    const result = await db.select().from(schema.reportPermissions).where(and(eq(schema.reportPermissions.reportId, reportId), eq(schema.reportPermissions.userId, userId)));
+    return result[0];
+  }
+
+  async createReportPermission(insertPermission: InsertReportPermission): Promise<ReportPermission> {
+    const result = await db.insert(schema.reportPermissions).values(insertPermission).returning();
+    return result[0];
+  }
+
+  async updateReportPermission(id: string, permission: "owner" | "editor" | "commenter" | "viewer"): Promise<ReportPermission | undefined> {
+    const result = await db.update(schema.reportPermissions).set({ permission }).where(eq(schema.reportPermissions.id, id)).returning();
+    return result[0];
+  }
+
+  // Activity Logs
+  async createActivityLog(insertLog: InsertActivityLog): Promise<ActivityLog> {
+    const result = await db.insert(schema.activityLogs).values(insertLog).returning();
+    return result[0];
+  }
+
+  async getActivityLogsByOrganization(organizationId: string, limit = 50): Promise<ActivityLog[]> {
+    return await db.select().from(schema.activityLogs).where(eq(schema.activityLogs.organizationId, organizationId)).orderBy(desc(schema.activityLogs.createdAt)).limit(limit);
+  }
+
+  // User Invitations
+  async createUserInvitation(insertInvitation: InsertUserInvitation): Promise<UserInvitation> {
+    const invitation = {
+      ...insertInvitation,
+      token: randomUUID(),
+      expiresAt: insertInvitation.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days default
+    };
+    const result = await db.insert(schema.userInvitations).values(invitation).returning();
+    return result[0];
+  }
+
+  async getUserInvitationByToken(token: string): Promise<UserInvitation | undefined> {
+    const result = await db.select().from(schema.userInvitations).where(eq(schema.userInvitations.token, token));
+    return result[0];
+  }
+
+  async updateUserInvitation(id: string, updates: Partial<UserInvitation>): Promise<UserInvitation | undefined> {
+    const result = await db.update(schema.userInvitations).set(updates).where(eq(schema.userInvitations.id, id)).returning();
+    return result[0];
+  }
+}
+
+
+// Temporarily use in-memory storage due to database connection issues
+// TODO: Fix SSL certificate issue with Neon database
 export const storage = new MemStorage();
+
+// Database initialization (currently disabled due to connection issues)
+export async function initializeDatabase() {
+  console.log("Using in-memory storage (database connection disabled temporarily)");
+}

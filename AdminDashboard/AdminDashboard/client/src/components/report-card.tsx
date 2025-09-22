@@ -52,9 +52,10 @@ function formatFileSize(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
-function formatDate(date: Date): string {
+function formatDate(date: Date | string): string {
   const now = new Date();
-  const diffTime = Math.abs(now.getTime() - date.getTime());
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  const diffTime = Math.abs(now.getTime() - dateObj.getTime());
   const diffHours = Math.floor(diffTime / (1000 * 60 * 60));
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
@@ -65,7 +66,7 @@ function formatDate(date: Date): string {
   } else if (diffDays < 7) {
     return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`;
   } else {
-    return date.toLocaleDateString();
+    return dateObj.toLocaleDateString();
   }
 }
 

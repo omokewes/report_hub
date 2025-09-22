@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/layout/header";
 import { ReportCard } from "@/components/report-card";
@@ -5,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/hooks/use-auth";
 import { Plus, FileText, Share, Eye, Star, Clock, Upload, BarChart3, Folder } from "lucide-react";
+import { UploadReportModal } from "@/components/modals/upload-report-modal";
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
 
   const { data: reports = [] } = useQuery({
     queryKey: ["/api/reports", { organizationId: user?.organizationId }],
@@ -38,7 +41,10 @@ export default function Dashboard() {
         title="Welcome back!"
         description="Here's what's happening with your reports today"
       >
-        <Button data-testid="button-new-report">
+        <Button 
+          onClick={() => setUploadModalOpen(true)}
+          data-testid="button-new-report"
+        >
           <Plus className="h-4 w-4 mr-2" />
           New Report
         </Button>
@@ -206,6 +212,7 @@ export default function Dashboard() {
                 <Button 
                   variant="ghost" 
                   className="w-full justify-start gap-3 h-10"
+                  onClick={() => setUploadModalOpen(true)}
                   data-testid="button-upload-report"
                 >
                   <Upload className="h-4 w-4" />
@@ -234,6 +241,12 @@ export default function Dashboard() {
           </Card>
         </div>
       </div>
+
+      {/* Upload Modal */}
+      <UploadReportModal 
+        open={uploadModalOpen} 
+        onOpenChange={setUploadModalOpen} 
+      />
     </div>
   );
 }
