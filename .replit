@@ -22,20 +22,20 @@ args = "Admin Dashboard Server"
 name = "Admin Dashboard Server"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "webview"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd AdminDashboard/AdminDashboard && npm run dev"
 waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"
 
 [[ports]]
 localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 43537
+localPort = 42509
 externalPort = 3000
 
 [deployment]
