@@ -40,5 +40,5 @@ externalPort = 3000
 
 [deployment]
 deploymentTarget = "autoscale"
-build = ["npm", "run", "build"]
-run = ["npm", "run", "start"]
+build = ["bash", "-c", "cd AdminDashboard/AdminDashboard && npm run build"]
+run = ["bash", "-c", "cd AdminDashboard/AdminDashboard && npm start"]
