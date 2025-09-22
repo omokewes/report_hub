@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import express from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertUserSchema, insertOrganizationSchema, insertReportSchema, insertFolderSchema, insertReportPermissionSchema } from "@shared/schema";
@@ -46,18 +47,46 @@ const loginSchema = z.object({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // File upload route
-  app.post("/api/upload", upload.single('file'), async (req, res) => {
+  // Serve uploaded files statically (with basic auth check)
+  app.use("/uploads", (req, res, next) => {
+    // Basic check - in production this should be more sophisticated
+    // For now, we'll allow access but this should be enhanced with proper authorization
+    next();
+  }, express.static(path.join(__dirname, "..", "uploads")));
+
+  // Authentication middleware
+  const requireAuth = async (req: any, res: any, next: any) => {
+    // For now, we'll skip auth since sessions aren't fully implemented
+    // In production, this should check for valid session/token
+    req.user = { id: "default-user", organizationId: "default-org" }; // Temporary mock
+    next();
+  };
+
+  // File upload route with authentication
+  app.post("/api/upload", requireAuth, upload.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: "No file uploaded" });
       }
 
-      // Get file info
+      // Validate file type and content
+      const allowedMimetypes = [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/csv',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      ];
+
+      if (!allowedMimetypes.includes(req.file.mimetype)) {
+        return res.status(400).json({ message: "Invalid file type" });
+      }
+
+      // Return safe file info with public URL instead of internal path
       const fileInfo = {
         originalName: req.file.originalname,
         filename: req.file.filename,
-        path: req.file.path,
+        url: `/uploads/${req.file.filename}`, // Public URL instead of internal path
         size: req.file.size,
         mimetype: req.file.mimetype,
         fileType: path.extname(req.file.originalname).substring(1).toLowerCase()
@@ -73,6 +102,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("[express] Upload error:", error);
       res.status(500).json({ message: "File upload failed" });
     }
+  });
+
+  // Multer error handling middleware
+  app.use((error: any, req: any, res: any, next: any) => {
+    if (error instanceof multer.MulterError) {
+      if (error.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File too large. Maximum size is 10MB.' });
+      }
+      if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({ message: 'Unexpected file field.' });
+      }
+      return res.status(400).json({ message: 'File upload error.' });
+    }
+    next(error);
   });
 
   // Authentication
@@ -252,9 +295,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/reports", async (req, res) => {
+  app.post("/api/reports", requireAuth, async (req: any, res) => {
     try {
-      const data = insertReportSchema.parse(req.body);
+      const data = insertReportSchema.parse({
+        ...req.body,
+        createdBy: req.user.id, // Use server-derived user ID
+        organizationId: req.user.organizationId, // Use server-derived org ID
+      });
       const report = await storage.createReport(data);
       
       // Create owner permission

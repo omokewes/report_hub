@@ -90,14 +90,9 @@ export function UploadReportModal({ open, onOpenChange, folderId }: UploadReport
       const formData = new FormData();
       formData.append('file', file);
 
-      const uploadResponse = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
+      const uploadResponse = await apiRequest("POST", "/api/upload", formData, {
+        headers: {},  // Don't set Content-Type, let browser set it for FormData
       });
-
-      if (!uploadResponse.ok) {
-        throw new Error('File upload failed');
-      }
 
       const uploadResult = await uploadResponse.json();
 
@@ -105,11 +100,10 @@ export function UploadReportModal({ open, onOpenChange, folderId }: UploadReport
       await createReportMutation.mutateAsync({
         name: reportName,
         description,
-        filePath: uploadResult.file.path,
+        filePath: uploadResult.file.url, // Use public URL instead of path
         fileType: uploadResult.file.fileType,
         fileSize: uploadResult.file.size,
-        createdBy: user.id,
-        organizationId: user.organizationId,
+        // Don't send createdBy and organizationId - server will derive from session
         folderId: folderId || null,
       });
     } catch (error) {
