@@ -34,6 +34,34 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   );
 }
 
+function RoleBasedRoute({ children, allowedRoles }: { children: React.ReactNode; allowedRoles: string[] }) {
+  const { user, isAuthenticated } = useAuth();
+  
+  if (!isAuthenticated) {
+    return <Login />;
+  }
+  
+  if (!user || !allowedRoles.includes(user.role)) {
+    return (
+      <div className="flex h-screen bg-background">
+        <Sidebar />
+        <main className="flex-1 overflow-auto">
+          <NotFound />
+        </main>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="flex h-screen bg-background">
+      <Sidebar />
+      <main className="flex-1 overflow-auto">
+        {children}
+      </main>
+    </div>
+  );
+}
+
 function Router() {
   const { isAuthenticated } = useAuth();
 
@@ -50,27 +78,27 @@ function Router() {
       </Route>
       
       <Route path="/reports">
-        <ProtectedRoute>
+        <RoleBasedRoute allowedRoles={["admin", "user"]}>
           <Reports />
-        </ProtectedRoute>
+        </RoleBasedRoute>
       </Route>
       
       <Route path="/analytics">
-        <ProtectedRoute>
+        <RoleBasedRoute allowedRoles={["admin", "user"]}>
           <Analytics />
-        </ProtectedRoute>
+        </RoleBasedRoute>
       </Route>
       
       <Route path="/analytics/builder">
-        <ProtectedRoute>
+        <RoleBasedRoute allowedRoles={["admin", "user"]}>
           <AnalyticsBuilder />
-        </ProtectedRoute>
+        </RoleBasedRoute>
       </Route>
       
       <Route path="/admin/users">
-        <ProtectedRoute>
+        <RoleBasedRoute allowedRoles={["admin"]}>
           <Users />
-        </ProtectedRoute>
+        </RoleBasedRoute>
       </Route>
       
       <Route path="/admin/settings">
@@ -80,9 +108,9 @@ function Router() {
       </Route>
       
       <Route path="/superadmin/organizations">
-        <ProtectedRoute>
+        <RoleBasedRoute allowedRoles={["superadmin"]}>
           <Organizations />
-        </ProtectedRoute>
+        </RoleBasedRoute>
       </Route>
       
       <Route path="/">
