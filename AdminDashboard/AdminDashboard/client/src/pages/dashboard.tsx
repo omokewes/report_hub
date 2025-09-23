@@ -16,6 +16,7 @@ export default function Dashboard() {
 
   // Different data queries based on user role
   const isSuperAdmin = user?.role === "superadmin";
+  const isAdmin = user?.role === "admin";
   
   // For super admins, get system-wide metrics
   const { data: systemMetrics } = useQuery({
@@ -65,7 +66,6 @@ export default function Dashboard() {
     sharedReports = reports.filter((report: any) => report.createdBy !== user?.id).length;
     teamMembers = users.length;
     
-    const isAdmin = user?.role === "admin";
     dashboardTitle = isAdmin ? "Admin Dashboard" : "Welcome back!";
     dashboardDescription = isAdmin 
       ? "Overview of your organization's reports and team activity"
@@ -82,7 +82,7 @@ export default function Dashboard() {
           {isSuperAdmin ? (
             <Button 
               variant="outline"
-              onClick={() => window.location.href = '/admin/organizations'}
+              onClick={() => window.location.href = '/superadmin/organizations'}
               data-testid="button-manage-organizations"
             >
               <Building2 className="h-4 w-4 mr-2" />

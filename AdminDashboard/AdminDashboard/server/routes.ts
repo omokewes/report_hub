@@ -539,6 +539,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/organizations/:id", requireAuth, requireRole(["superadmin"]), async (req, res) => {
+    try {
+      const data = insertOrganizationSchema.partial().parse(req.body);
+      const organization = await storage.updateOrganization(req.params.id, data);
+      if (!organization) {
+        return res.status(404).json({ message: "Organization not found" });
+      }
+      res.json(organization);
+    } catch (error) {
+      res.status(400).json({ message: "Invalid organization data" });
+    }
+  });
+
+  app.delete("/api/organizations/:id", requireAuth, requireRole(["superadmin"]), async (req, res) => {
+    try {
+      const organization = await storage.getOrganization(req.params.id);
+      if (!organization) {
+        return res.status(404).json({ message: "Organization not found" });
+      }
+      
+      // Check if organization has users - prevent deletion if it does
+      const users = await storage.getUsersByOrganization(req.params.id);
+      if (users.length > 0) {
+        return res.status(400).json({ 
+          message: "Cannot delete organization with existing users. Please remove all users first." 
+        });
+      }
+      
+      // Soft delete by updating status instead of hard delete
+      const updatedOrg = await storage.updateOrganization(req.params.id, { 
+        name: `${organization.name} (Deleted)`,
+        settings: { ...organization.settings, deleted: true, deletedAt: new Date().toISOString() }
+      });
+      
+      res.json({ message: "Organization deleted successfully", organization: updatedOrg });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete organization" });
+    }
+  });
+
   // Users
   app.get("/api/users", requireAuth, requireRole(["admin", "superadmin"]), async (req: any, res) => {
     try {

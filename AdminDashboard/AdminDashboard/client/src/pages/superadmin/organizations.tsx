@@ -1,9 +1,16 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
 import { 
   Building2, 
   Users, 
@@ -12,7 +19,10 @@ import {
   Server,
   Shield,
   Activity,
-  AlertCircle
+  AlertCircle,
+  Plus,
+  Edit,
+  Trash2
 } from "lucide-react";
 
 function getOrganizationTypeColor(size: string) {
@@ -41,8 +51,154 @@ function getStatusColor(status: string) {
   }
 }
 
+function CreateOrganizationModal({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [formData, setFormData] = useState({
+    name: "",
+    domain: "",
+    industry: "",
+    size: ""
+  });
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const createOrgMutation = useMutation({
+    mutationFn: async (data: typeof formData) => {
+      const response = await fetch("/api/organizations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        throw new Error("Failed to create organization");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/system/metrics"] });
+      toast({
+        title: "Success",
+        description: "Organization created successfully",
+      });
+      setFormData({ name: "", domain: "", industry: "", size: "" });
+      onOpenChange(false);
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to create organization",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.name || !formData.size) {
+      toast({
+        title: "Error",
+        description: "Please fill in required fields",
+        variant: "destructive",
+      });
+      return;
+    }
+    createOrgMutation.mutate(formData);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Create New Organization</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <Label htmlFor="name">Organization Name *</Label>
+            <Input
+              id="name"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="Enter organization name"
+              required
+            />
+          </div>
+          <div>
+            <Label htmlFor="domain">Domain</Label>
+            <Input
+              id="domain"
+              value={formData.domain}
+              onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
+              placeholder="example.com"
+            />
+          </div>
+          <div>
+            <Label htmlFor="industry">Industry</Label>
+            <Input
+              id="industry"
+              value={formData.industry}
+              onChange={(e) => setFormData({ ...formData, industry: e.target.value })}
+              placeholder="Technology, Finance, Healthcare, etc."
+            />
+          </div>
+          <div>
+            <Label htmlFor="size">Organization Size *</Label>
+            <Select value={formData.size} onValueChange={(value) => setFormData({ ...formData, size: value })}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select organization size" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Trial">Trial (1-10 users)</SelectItem>
+                <SelectItem value="Professional">Professional (11-100 users)</SelectItem>
+                <SelectItem value="Enterprise">Enterprise (100+ users)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={createOrgMutation.isPending}>
+              {createOrgMutation.isPending ? "Creating..." : "Create Organization"}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Organizations() {
   const { user } = useAuth();
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const deleteOrgMutation = useMutation({
+    mutationFn: async (orgId: string) => {
+      const response = await fetch(`/api/organizations/${orgId}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new Error("Failed to delete organization");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/system/metrics"] });
+      toast({
+        title: "Success",
+        description: "Organization deleted successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete organization",
+        variant: "destructive",
+      });
+    },
+  });
 
   const { data: systemMetrics, isLoading: metricsLoading } = useQuery({
     queryKey: ["/api/system/metrics"],
@@ -83,7 +239,12 @@ export default function Organizations() {
       <Header
         title="System Overview"
         description="Monitor and manage all organizations across the platform"
-      />
+      >
+        <Button onClick={() => setCreateModalOpen(true)} data-testid="button-create-organization">
+          <Plus className="h-4 w-4 mr-2" />
+          Create Organization
+        </Button>
+      </Header>
 
       {/* System Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
@@ -182,9 +343,38 @@ export default function Organizations() {
                         </div>
                       </div>
                     </div>
-                    <Button size="sm" data-testid={`button-manage-${org.id}`}>
-                      Manage
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" data-testid={`button-edit-${org.id}`}>
+                        <Edit className="h-3 w-3 mr-1" />
+                        Edit
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button size="sm" variant="destructive" data-testid={`button-delete-${org.id}`}>
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Delete
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete Organization</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Are you sure you want to delete "{org.name}"? This action cannot be undone.
+                              The organization will be marked as deleted and all users will lose access.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction 
+                              onClick={() => deleteOrgMutation.mutate(org.id)}
+                              className="bg-red-600 hover:bg-red-700"
+                            >
+                              {deleteOrgMutation.isPending ? "Deleting..." : "Delete Organization"}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -297,6 +487,11 @@ export default function Organizations() {
           </Card>
         </div>
       </div>
+
+      <CreateOrganizationModal 
+        open={createModalOpen} 
+        onOpenChange={setCreateModalOpen} 
+      />
     </div>
   );
 }
