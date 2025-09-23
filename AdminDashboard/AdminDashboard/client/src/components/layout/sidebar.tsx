@@ -16,9 +16,9 @@ import { Button } from "@/components/ui/button";
 
 const navigationItems = [
   { path: "/dashboard", icon: Home, label: "Dashboard", roles: ["superadmin", "admin", "user"] },
-  { path: "/reports", icon: FileText, label: "Reports", roles: ["superadmin", "admin", "user"] },
-  { path: "/analytics", icon: BarChart3, label: "Analytics", roles: ["superadmin", "admin", "user"] },
-  { path: "/admin/organizations", icon: Building2, label: "Organizations", roles: ["superadmin"] },
+  { path: "/reports", icon: FileText, label: "Reports", roles: ["admin", "user"] },
+  { path: "/analytics", icon: BarChart3, label: "Analytics", roles: ["admin", "user"] },
+  { path: "/superadmin/organizations", icon: Building2, label: "Organizations", roles: ["superadmin"] },
   { path: "/admin/users", icon: Users, label: "Manage Users", roles: ["admin"] },
   { path: "/admin/settings", icon: Settings, label: "Settings", roles: ["superadmin", "admin", "user"] },
 ];

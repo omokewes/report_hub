@@ -79,7 +79,7 @@ function Router() {
         </ProtectedRoute>
       </Route>
       
-      <Route path="/admin/organizations">
+      <Route path="/superadmin/organizations">
         <ProtectedRoute>
           <Organizations />
         </ProtectedRoute>

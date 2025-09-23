@@ -56,7 +56,10 @@ function CreateOrganizationModal({ open, onOpenChange }: { open: boolean; onOpen
     name: "",
     domain: "",
     industry: "",
-    size: ""
+    size: "",
+    adminEmail: "",
+    adminName: "",
+    adminUsername: ""
   });
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -75,13 +78,17 @@ function CreateOrganizationModal({ open, onOpenChange }: { open: boolean; onOpen
       }
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ["/api/system/metrics"] });
+      
+      // Show success message with admin credentials
       toast({
-        title: "Success",
-        description: "Organization created successfully",
+        title: "Organization & Admin Created Successfully!",
+        description: `Organization "${response.organization.name}" created with admin user "${response.admin.name}". Admin password: ${response.admin.tempPassword}`,
+        duration: 10000, // Show for 10 seconds
       });
-      setFormData({ name: "", domain: "", industry: "", size: "" });
+      
+      setFormData({ name: "", domain: "", industry: "", size: "", adminEmail: "", adminName: "", adminUsername: "" });
       onOpenChange(false);
     },
     onError: () => {
@@ -95,10 +102,10 @@ function CreateOrganizationModal({ open, onOpenChange }: { open: boolean; onOpen
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.size) {
+    if (!formData.name || !formData.size || !formData.adminEmail || !formData.adminName || !formData.adminUsername) {
       toast({
         title: "Error",
-        description: "Please fill in required fields",
+        description: "Please fill in all required fields",
         variant: "destructive",
       });
       return;
@@ -110,9 +117,10 @@ function CreateOrganizationModal({ open, onOpenChange }: { open: boolean; onOpen
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create New Organization</DialogTitle>
+          <DialogTitle>Create New Organization & Admin</DialogTitle>
+          <p className="text-sm text-muted-foreground">Create an organization and assign its first admin user</p>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4 max-h-96 overflow-y-auto">
           <div>
             <Label htmlFor="name">Organization Name *</Label>
             <Input
@@ -154,6 +162,48 @@ function CreateOrganizationModal({ open, onOpenChange }: { open: boolean; onOpen
               </SelectContent>
             </Select>
           </div>
+
+          {/* Admin User Section */}
+          <div className="border-t pt-4 mt-4">
+            <h4 className="font-medium mb-3">Organization Administrator</h4>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="adminEmail">Admin Email *</Label>
+                <Input
+                  id="adminEmail"
+                  type="email"
+                  value={formData.adminEmail}
+                  onChange={(e) => setFormData({ ...formData, adminEmail: e.target.value })}
+                  placeholder="admin@example.com"
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="adminName">Admin Full Name *</Label>
+                <Input
+                  id="adminName"
+                  value={formData.adminName}
+                  onChange={(e) => setFormData({ ...formData, adminName: e.target.value })}
+                  placeholder="John Doe"
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="adminUsername">Admin Username *</Label>
+                <Input
+                  id="adminUsername"
+                  value={formData.adminUsername}
+                  onChange={(e) => setFormData({ ...formData, adminUsername: e.target.value })}
+                  placeholder="johndoe"
+                  required
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  A temporary password will be generated and shown after creation
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

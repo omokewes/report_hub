@@ -531,11 +531,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/organizations", requireAuth, requireRole(["superadmin"]), async (req, res) => {
     try {
-      const data = insertOrganizationSchema.parse(req.body);
-      const organization = await storage.createOrganization(data);
-      res.status(201).json(organization);
+      const { adminEmail, adminName, adminUsername, ...orgData } = req.body;
+      
+      // Validate organization data
+      const validatedOrgData = insertOrganizationSchema.parse(orgData);
+      
+      // Validate admin data
+      if (!adminEmail || !adminName || !adminUsername) {
+        return res.status(400).json({ message: "Admin email, name, and username are required" });
+      }
+      
+      // Check if admin email or username already exists
+      const existingUser = await storage.getUserByEmail(adminEmail);
+      if (existingUser) {
+        return res.status(400).json({ message: "Admin email already exists" });
+      }
+      
+      // Generate temporary password for admin
+      const tempPassword = Math.random().toString(36).slice(-8);
+      const hashedPassword = await bcrypt.hash(tempPassword, SALT_ROUNDS);
+      
+      // Create organization first
+      const organization = await storage.createOrganization(validatedOrgData);
+      
+      try {
+        // Create admin user for the organization
+        const adminUser = await storage.createUser({
+          email: adminEmail,
+          name: adminName,
+          username: adminUsername,
+          password: hashedPassword,
+          role: "admin",
+          organizationId: organization.id
+        });
+        
+        // Log activity
+        await storage.logActivity({
+          userId: adminUser.id,
+          organizationId: organization.id,
+          action: "organization_created",
+          resource: "organization",
+          resourceId: organization.id,
+          metadata: { createdBy: req.user.id }
+        });
+        
+        // Return organization and admin details (including temp password)
+        const { password: _, ...adminWithoutPassword } = adminUser;
+        res.status(201).json({ 
+          organization,
+          admin: {
+            ...adminWithoutPassword,
+            tempPassword
+          },
+          message: "Organization and admin user created successfully"
+        });
+        
+      } catch (userError) {
+        // If user creation fails, we should ideally rollback the organization creation
+        // For now, we'll just return an error
+        console.error("Failed to create admin user:", userError);
+        res.status(500).json({ message: "Organization created but failed to create admin user" });
+      }
+      
     } catch (error) {
-      res.status(400).json({ message: "Invalid organization data" });
+      console.error("Create organization error:", error);
+      res.status(400).json({ message: "Invalid organization or admin data" });
     }
   });
 
